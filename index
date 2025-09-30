@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Нагревание льда — учебная визуализация</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f9f9fb;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: #333;
+    }
+
+    h1 {
+      margin-bottom: 15px;
+      color: #2c3e50;
+    }
+
+    .controls {
+      margin-bottom: 20px;
+    }
+
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+
+    button:hover {
+      background-color: #2980b9;
+    }
+
+    .container {
+      display: flex;
+      gap: 40px;
+      flex-wrap: wrap;
+      justify-content: center;
+      align-items: flex-start;
+      max-width: 1200px;
+    }
+
+    .graph-container {
+      width: 520px;
+      height: 320px;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      position: relative;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+
+    .beaker-container {
+      position: relative;
+      width: 200px;
+      height: 300px;
+    }
+
+    .beaker {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 120px;
+      height: 220px;
+      border: 3px solid #444;
+      border-top: none;
+      border-radius: 0 0 10px 10px;
+      background: transparent;
+      overflow: hidden;
+    }
+
+    .water {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(64, 164, 223, 0.5);
+      border-top: 1px solid rgba(64, 164, 223, 0.8);
+      transition: height 0.5s ease;
+    }
+
+    .ice {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(200, 230, 255, 0.9);
+      clip-path: polygon(
+        20% 0%, 30% 10%, 40% 5%, 50% 15%, 60% 8%, 70% 12%, 80% 5%,
+        90% 10%, 100% 0%, 100% 100%, 0% 100%, 0% 0%
+      );
+      transition: height 0.5s ease;
+    }
+
+    .drop {
+      position: absolute;
+      background: rgba(64, 164, 223, 0.7);
+      border-radius: 50%;
+      opacity: 0;
+    }
+
+    .stage-labels {
+      margin-top: 20px;
+      display: flex;
+      justify-content: space-around;
+      width: 520px;
+      font-size: 14px;
+      color: #555;
+    }
+
+    .axis {
+      stroke: #333;
+      stroke-width: 1;
+    }
+
+    .grid {
+      stroke: #eee;
+      stroke-width: 1;
+    }
+
+    .temp-line {
+      fill: none;
+      stroke: #e74c3c;
+      stroke-width: 3;
+      stroke-linecap: round;
+    }
+
+    .label {
+      font-size: 12px;
+      fill: #333;
+    }
+  </style>
+</head>
+<body>
+  <h1>Нагревание льда в комнате (+20 °C)</h1>
+
+  <div class="controls">
+    <button id="restartBtn">Начать заново</button>
+  </div>
+
+  <div class="container">
+    <div class="graph-container" id="graph"></div>
+    <div class="beaker-container">
+      <div class="beaker">
+        <div class="water" id="water"></div>
+        <div class="ice" id="ice"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage-labels">
+    <div id="label1">Нагревание льда</div>
+    <div id="label2">Плавление при 0 °C</div>
+    <div id="label3">Нагревание воды</div>
+  </div>
+
+  <script>
+    // Параметры анимации
+    const totalDuration = 12000; // 12 секунд
+    const heatingIceDuration = 3000;      // 0–3 сек
+    const meltingDuration = 5000;         // 3–8 сек
+    const heatingWaterDuration = 4000;    // 8–12 сек
+
+    let startTime = null;
+    let animationId = null;
+
+    // DOM элементы
+    const iceEl = document.getElementById('ice');
+    const waterEl = document.getElementById('water');
+    const label1 = document.getElementById('label1');
+    const label2 = document.getElementById('label2');
+    const label3 = document.getElementById('label3');
+    const restartBtn = document.getElementById('restartBtn');
+
+    // График
+    const graph = document.getElementById('graph');
+    const width = graph.clientWidth;
+    const height = graph.clientHeight;
+    let svg = null;
+    let path = null;
+
+    // Инициализация SVG
+    function initGraph() {
+      // Очистка
+      graph.innerHTML = '';
+      svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('width', width);
+      svg.setAttribute('height', height);
+      graph.appendChild(svg);
+
+      const margin = { top: 20, right: 20, bottom: 40, left: 50 };
+      const chartWidth = width - margin.left - margin.right;
+      const chartHeight = height - margin.top - margin.bottom;
+
+      // Масштабы: Y от -10 (внизу) до +20 (вверху)
+      window.xScale = (t) => margin.left + (t / totalDuration) * chartWidth;
+      window.yScale = (temp) => {
+        // temp: от -10 до +20 → от chartHeight до 0
+        return margin.top + chartHeight - ((temp + 10) / 30) * chartHeight;
+      };
+
+      // Сетка и оси
+      for (let temp = -10; temp <= 20; temp += 10) {
+        const y = window.yScale(temp);
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', margin.left);
+        line.setAttribute('y1', y);
+        line.setAttribute('x2', margin.left + chartWidth);
+        line.setAttribute('y2', y);
+        line.setAttribute('class', 'grid');
+        svg.appendChild(line);
+
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', margin.left - 10);
+        text.setAttribute('y', y + 4);
+        text.setAttribute('text-anchor', 'end');
+        text.setAttribute('class', 'label');
+        text.textContent = temp + '°C';
+        svg.appendChild(text);
+      }
+
+      for (let t = 0; t <= totalDuration; t += totalDuration / 4) {
+        const x = window.xScale(t);
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x);
+        line.setAttribute('y1', margin.top);
+        line.setAttribute('x2', x);
+        line.setAttribute('y2', margin.top + chartHeight);
+        line.setAttribute('class', 'grid');
+        svg.appendChild(line);
+
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', x);
+        text.setAttribute('y', margin.top + chartHeight + 15);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('class', 'label');
+        text.textContent = Math.round(t / 1000) + ' с';
+        svg.appendChild(text);
+      }
+
+      // Оси
+      const xAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      xAxis.setAttribute('x1', margin.left);
+      xAxis.setAttribute('y1', margin.top + chartHeight);
+      xAxis.setAttribute('x2', margin.left + chartWidth);
+      xAxis.setAttribute('y2', margin.top + chartHeight);
+      xAxis.setAttribute('class', 'axis');
+      svg.appendChild(xAxis);
+
+      const yAxis = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      yAxis.setAttribute('x1', margin.left);
+      yAxis.setAttribute('y1', margin.top);
+      yAxis.setAttribute('x2', margin.left);
+      yAxis.setAttribute('y2', margin.top + chartHeight);
+      yAxis.setAttribute('class', 'axis');
+      svg.appendChild(yAxis);
+
+      // Линия графика
+      path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class', 'temp-line');
+      svg.appendChild(path);
+    }
+
+    // Температура по времени
+    function getTemperature(t) {
+      if (t <= heatingIceDuration) {
+        return -10 + (10 * t) / heatingIceDuration;
+      } else if (t <= heatingIceDuration + meltingDuration) {
+        return 0;
+      } else {
+        const t2 = t - heatingIceDuration - meltingDuration;
+        return Math.min(20, (20 * t2) / heatingWaterDuration);
+      }
+    }
+
+    // Обновление визуализации
+    function animate(time) {
+      if (!startTime) startTime = time;
+      const elapsed = time - startTime;
+
+      if (elapsed > totalDuration) {
+        return; // Анимация завершена
+      }
+
+      const temp = getTemperature(elapsed);
+
+      // Обновляем линию графика
+      let d = `M ${window.xScale(0)} ${window.yScale(-10)}`;
+      const step = 50;
+      for (let t = 0; t <= elapsed; t += step) {
+        d += ` L ${window.xScale(t)} ${window.yScale(getTemperature(t))}`;
+      }
+      path.setAttribute('d', d);
+
+      // Обновляем сосуд
+      if (elapsed <= heatingIceDuration) {
+        iceEl.style.height = '100%';
+        waterEl.style.height = '0%';
+        label1.style.fontWeight = 'bold';
+        label2.style.fontWeight = 'normal';
+        label3.style.fontWeight = 'normal';
+      } else if (elapsed <= heatingIceDuration + meltingDuration) {
+        const meltProgress = (elapsed - heatingIceDuration) / meltingDuration;
+        iceEl.style.height = (100 * (1 - meltProgress)) + '%';
+        waterEl.style.height = (100 * meltProgress) + '%';
+        label1.style.fontWeight = 'normal';
+        label2.style.fontWeight = 'bold';
+        label3.style.fontWeight = 'normal';
+
+        if (Math.random() < 0.05) {
+          const drop = document.createElement('div');
+          drop.classList.add('drop');
+          const size = 4 + Math.random() * 6;
+          drop.style.width = size + 'px';
+          drop.style.height = size + 'px';
+          drop.style.left = (30 + Math.random() * 40) + '%';
+          drop.style.bottom = (20 + Math.random() * 30) + '%';
+          drop.style.opacity = '1';
+          document.querySelector('.beaker').appendChild(drop);
+          setTimeout(() => {
+            drop.style.opacity = '0';
+            setTimeout(() => drop.remove(), 500);
+          }, 800);
+        }
+      } else {
+        iceEl.style.height = '0%';
+        waterEl.style.height = '100%';
+        label1.style.fontWeight = 'normal';
+        label2.style.fontWeight = 'normal';
+        label3.style.fontWeight = 'bold';
+      }
+
+      animationId = requestAnimationFrame(animate);
+    }
+
+    // Перезапуск
+    function restart() {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+      startTime = null;
+      initGraph();
+      iceEl.style.height = '100%';
+      waterEl.style.height = '0%';
+      label1.style.fontWeight = 'normal';
+      label2.style.fontWeight = 'normal';
+      label3.style.fontWeight = 'normal';
+      // Удаляем все капли
+      document.querySelectorAll('.drop').forEach(d => d.remove());
+      animationId = requestAnimationFrame(animate);
+    }
+
+    // Инициализация
+    initGraph();
+    restartBtn.addEventListener('click', restart);
+    restart(); // первый запуск
+  </script>
+</body>
+</html>
